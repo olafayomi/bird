@@ -30,6 +30,13 @@
 #include "lib/timer.h"
 #include "lib/string.h"
 
+/* Include header files for socket */
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <netdb.h>
+
+
 #include "sdn.h"
 
 #define P ((struct sdn_proto *) p)
@@ -43,7 +50,9 @@ static struct sdn_interface *new_iface(struct proto *p, struct iface *new, unsig
 static sock* init_unix_socket(struct proto *p);
 static zeromq* init_zeromq(struct proto *p);
 static void sdn_route_print_to_sockets(struct proto* p, char* route);
-
+int RheaSockfd;
+char  Rheabuffer[256];
+int nsent;
 /*
  * Input processing
  *
@@ -55,6 +64,42 @@ static void sdn_route_print_to_sockets(struct proto* p, char* route);
  *
  * This part is responsible for getting packets out to the network.
  */
+
+/* Error logging for TCP client socket */
+static void client_error(const char *msg)
+{
+   log( L_ERR "Unexpected error for RheaFlow client: %s", msg);
+}
+
+
+/* creata a TCP socket and establish a connection to
+ * 
+ * to RheaFlow.
+ */
+static int init_rhea_client()
+{
+    int sockfd, n;
+    int portno = 55650;
+    char* server_name = "localhost";
+    struct sockaddr_in serv_addr;
+    struct hostent *server;
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0 )
+        log( L_ERR "ERROR opening socket to connect to RheaFlow");
+    server = gethostbyname(server_name);
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    bcopy((char *)server->h_addr,
+         (char *)&serv_addr.sin_addr.s_addr,
+         server->h_length);
+    serv_addr.sin_port = htons(portno);
+    /* Initiate connection to the server */
+    if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0 )
+       log(L_ERR "ERROR connecting to server");
+
+    return sockfd;
+}
 
 static void
 sdn_tx_err( sock *s, int err )
@@ -134,6 +179,8 @@ sdn_start(struct proto *p)
   // we're going to build zmq sockets instead
   //swrapper->skt = init_unix_socket(p);
   zwrapper->skt = init_zeromq(p);
+  // Start the RheaFlow client socket 
+  RheaSockfd = init_rhea_client();
   // URL tcp://*:5556
   //add_head( &P->interfaces, NODE rif );
   add_head( &P->sockets, NODE zwrapper );
@@ -707,6 +754,25 @@ static void sdn_route_print_to_sockets(struct proto* p, char* route)
   }
 }
 
+static void route_print_to_rhea_socket(int sockfd, char* route)
+{
+    if (sockfd >= 0) {
+       nsent = write(sockfd,route,strlen(route));
+       if(nsent < 0) {
+         log(L_ERR "Error writing to rhea socket");
+       }
+       bzero(Rheabuffer, 256);
+       nsent = read(sockfd,Rheabuffer,255);
+       if (nsent < 0) {
+          log(L_ERR "Error reading from rhea socket");
+       }
+       log_msg(L_DEBUG "Rhea says: %s",Rheabuffer);
+     }
+    else {
+       log(L_ERR "No socket for rhea client");
+    }
+}
+  
 static void
 sdn_route_mod_str(struct proto *p, struct sdn_entry *e, struct network *net, struct rte *new, struct rte *old)
 {
@@ -727,6 +793,7 @@ sdn_route_mod_str(struct proto *p, struct sdn_entry *e, struct network *net, str
       outbuffer = xmalloc(varlen+1);
       outbuffer[varlen] = '\0';
       bsnprintf(outbuffer, varlen, addedstring, net->n.prefix, net->n.pxlen, new->attrs->gw);
+      route_print_to_rhea_socket(RheaSockfd, outbuffer);
       log_msg(L_DEBUG "%s", outbuffer);
       //sdn_route_print_to_sockets(p, outbuffer);
       free(outbuffer);
@@ -738,6 +805,7 @@ sdn_route_mod_str(struct proto *p, struct sdn_entry *e, struct network *net, str
       outbuffer = xmalloc(varlen+1);
       outbuffer[varlen] = '\0';
       bsnprintf(outbuffer, varlen, addedstring, net->n.prefix, net->n.pxlen);
+      route_print_to_rhea_socket(RheaSockfd, outbuffer);
       log_msg(L_DEBUG "%s", outbuffer);
       //sdn_route_print_to_sockets(p, outbuffer);
       free(outbuffer);
@@ -757,6 +825,7 @@ sdn_route_mod_str(struct proto *p, struct sdn_entry *e, struct network *net, str
       outbuffer = xmalloc(varlen+1);
       outbuffer[varlen] = '\0';
       bsnprintf(outbuffer, varlen, removedstring, net->n.prefix, net->n.pxlen, old->attrs->gw);
+      route_print_to_rhea_socket(RheaSockfd, outbuffer);
       log_msg(L_DEBUG "%s", outbuffer);
       //sdn_route_print_to_sockets(p, outbuffer);
       free(outbuffer);
@@ -768,6 +837,7 @@ sdn_route_mod_str(struct proto *p, struct sdn_entry *e, struct network *net, str
       outbuffer = xmalloc(varlen+1);
       outbuffer[varlen] = '\0';
       bsnprintf(outbuffer, varlen, removedstring, net->n.prefix, net->n.pxlen);
+      route_print_to_rhea_socket(RheaSockfd, outbuffer);
       log_msg(L_DEBUG "%s", outbuffer);
       //sdn_route_print_to_sockets(p, outbuffer);
       free(outbuffer);
