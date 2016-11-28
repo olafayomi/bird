@@ -1062,5 +1062,4 @@ struct protocol proto_sdn = {
   reconfigure: sdn_reconfigure,
   copy_config: sdn_copy_config,
   config_size: sizeof(struct sdn_proto_config)
-
 };
