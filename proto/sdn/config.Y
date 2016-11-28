@@ -28,7 +28,7 @@ CF_GRAMMAR
 CF_ADDTO(proto, sdn_cfg '}')
 
 sdn_cfg_start: proto_start SDN {
-     this_proto = proto_config_new(&proto_sdn, sizeof(struct sdn_proto_config), $1);
+     this_proto = proto_config_new(&proto_sdn, $1);
      sdn_init_config(SDN_CFG);
    }
  ;
